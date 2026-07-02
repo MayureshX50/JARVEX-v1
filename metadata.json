@@ -1,0 +1,10 @@
+{
+  "name": "Jarvis AI",
+  "description": "An immersive, animated Jarvis AI system dashboard with interactive widgets, real-time diagnostics, armory control, arc reactor cores, and fully functional conversational AI powered by Gemini.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
