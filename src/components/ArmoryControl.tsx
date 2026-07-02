@@ -193,7 +193,7 @@ export default function ArmoryControl({ onAddLog }: ArmoryControlProps) {
 
   // 3D Canvas states and refs
   const [autoRotate, setAutoRotate] = useState<boolean>(true);
-  const [projectedNodes, setProjectedNodes] = useState<Record<string, { x: number; y: number }>>({});
+  const projectedNodesRef = useRef<Record<string, { x: number; y: number }>>({});
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const yawRef = useRef<number>(0.6);
@@ -340,7 +340,7 @@ export default function ArmoryControl({ onAddLog }: ArmoryControlProps) {
         ctx.stroke();
       }
 
-      // Sync locations to projectedNodes
+      // Sync locations to projectedNodesRef
       const nodesMap: Record<string, { x: number; y: number }> = {};
       const hotspots = [
         { id: "helmet", idx: 0 },
@@ -356,14 +356,18 @@ export default function ArmoryControl({ onAddLog }: ArmoryControlProps) {
 
         const isAct = activeNodeRef.current === hs.id;
 
+        // Dynamic pulse animation based on real-time timestamp
+        const pulse = isAct ? 1 + Math.sin(Date.now() / 150) * 0.15 : 1.0;
+        const outerRadius = isAct ? 7 * pulse : 4;
+
         // Draw ring around hotspot on canvas
         ctx.beginPath();
-        ctx.arc(p.x, p.y, isAct ? 7 : 4, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, outerRadius, 0, Math.PI * 2);
         ctx.fillStyle = isAct ? "rgba(34, 211, 238, 0.25)" : "rgba(34, 211, 238, 0.08)";
         ctx.fill();
 
         ctx.beginPath();
-        ctx.arc(p.x, p.y, isAct ? 7 : 4, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, outerRadius, 0, Math.PI * 2);
         ctx.strokeStyle = isAct ? "rgba(34, 211, 238, 0.9)" : "rgba(34, 211, 238, 0.5)";
         ctx.lineWidth = isAct ? 1.5 : 1.0;
         ctx.stroke();
@@ -401,7 +405,7 @@ export default function ArmoryControl({ onAddLog }: ArmoryControlProps) {
         }
       }
 
-      setProjectedNodes(nodesMap);
+      projectedNodesRef.current = nodesMap;
       animationId = requestAnimationFrame(render);
     };
 
@@ -419,6 +423,31 @@ export default function ArmoryControl({ onAddLog }: ArmoryControlProps) {
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Hit test to update cursor type (pointer when hovering hotspot, grab/grabbing otherwise)
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    let isOverHotspot = false;
+    const coordsList = Object.values(projectedNodesRef.current) as { x: number; y: number }[];
+    for (const coords of coordsList) {
+      const dx = mouseX - coords.x;
+      const dy = mouseY - coords.y;
+      if (Math.sqrt(dx * dx + dy * dy) < 18) {
+        isOverHotspot = true;
+        break;
+      }
+    }
+
+    if (isOverHotspot) {
+      canvas.style.cursor = "pointer";
+    } else {
+      canvas.style.cursor = isDraggingRef.current ? "grabbing" : "grab";
+    }
+
     if (!isDraggingRef.current) return;
     const dx = e.clientX - dragStartRef.current.x;
     const dy = e.clientY - dragStartRef.current.y;
@@ -445,6 +474,44 @@ export default function ArmoryControl({ onAddLog }: ArmoryControlProps) {
     yawRef.current += dx * 0.01;
     pitchRef.current = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, pitchRef.current + dy * 0.01));
     dragStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    // Check if clicked near any hotspot
+    let clickedNode: string | null = null;
+    let clickedLabel = "";
+
+    const hotspots = [
+      { id: "helmet", label: "Helmet HUD" },
+      { id: "chest", label: "Arc Reactor Core" },
+      { id: "left-hand", label: "Left Repulsor" },
+      { id: "right-hand", label: "Right Repulsor" },
+      { id: "boots", label: "Flight Thrusters" },
+    ];
+
+    for (const hs of hotspots) {
+      const coords = projectedNodesRef.current[hs.id];
+      if (coords) {
+        const dx = clickX - coords.x;
+        const dy = clickY - coords.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 18) { // 18px radius hit target
+          clickedNode = hs.id;
+          clickedLabel = hs.label;
+          break;
+        }
+      }
+    }
+
+    if (clickedNode) {
+      handleNodeClick(clickedNode, clickedLabel);
+    }
   };
 
   const applyPresetView = (view: "front" | "side" | "perspective" | "rear") => {
@@ -621,40 +688,12 @@ export default function ArmoryControl({ onAddLog }: ArmoryControlProps) {
             )}
           </AnimatePresence>
 
-          {/* 3D Holographic Canvas */}
+          {/* 3D Holographic Canvas with precision click detection */}
           <canvas 
             ref={canvasRef} 
+            onClick={handleCanvasClick}
             className="w-[240px] h-[260px] filter drop-shadow-[0_0_12px_rgba(6,182,212,0.3)] cursor-grab active:cursor-grabbing"
           />
-
-          {/* Hotspots clickable overlays */}
-          {Object.entries(projectedNodes).map(([nodeId, unknownCoords]) => {
-            const coords = unknownCoords as { x: number; y: number };
-            const nodeLabel = nodeId === "left-hand" ? "Left Repulsor" :
-                              nodeId === "right-hand" ? "Right Repulsor" :
-                              nodeId === "helmet" ? "Helmet HUD" :
-                              nodeId === "chest" ? "Arc Reactor" : "Flight Thrusters";
-            const isActive = activeNode === nodeId;
-            return (
-              <button
-                key={nodeId}
-                onClick={() => handleNodeClick(nodeId, nodeLabel)}
-                style={{
-                  position: "absolute",
-                  left: coords.x,
-                  top: coords.y,
-                  transform: "translate(-50%, -50%)",
-                }}
-                className={`w-6 h-6 rounded-full flex items-center justify-center z-30 group cursor-pointer focus:outline-none`}
-                title={nodeLabel}
-              >
-                {/* Visual pulsating core of hotspot */}
-                <span className={`absolute w-1.5 h-1.5 rounded-full bg-cyan-400 transition-transform duration-300 ${isActive ? 'scale-125 shadow-[0_0_8px_#22d3ee]' : 'group-hover:scale-110'}`} />
-                {/* Outward rings */}
-                <span className={`absolute w-4 h-4 rounded-full border border-cyan-400/0 group-hover:border-cyan-400/40 group-hover:scale-110 transition-all duration-300 ${isActive ? 'border-cyan-400/70 scale-125 animate-pulse' : ''}`} />
-              </button>
-            );
-          })}
 
           {/* Hologram View Controls Overlay */}
           <div className="absolute top-2 right-2 flex flex-col gap-1.5 bg-black/65 border border-cyan-900/50 p-1.5 rounded-lg z-20">
